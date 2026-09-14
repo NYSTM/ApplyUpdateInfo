@@ -1,0 +1,31 @@
+﻿{
+  "tableName": "Users",
+  "operations": [
+    {
+      "type": "insert",
+      "values": {
+        "Id": 2,
+        "Name": "佐藤花子",
+        "Email": "hanako@example.com",
+        "UpdatedAt": "2025-01-15T10:30:00"
+      }
+    },
+    {
+      "type": "update",
+      "keys": {
+        "Id": 1
+      },
+      "values": {
+        "Name": "山田太郎（更新）",
+        "Email": "taro.updated@example.com",
+        "UpdatedAt": "$now"
+      }
+    },
+    {
+      "type": "delete",
+      "keys": {
+        "Id": 99
+      }
+    }
+  ]
+}

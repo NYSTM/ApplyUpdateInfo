@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/ソリューション項目/">
+    <File Path=".editorconfig" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+  </Folder>
+  <Project Path="ApplyUpdateInfo.DatabaseSetup/ApplyUpdateInfo.DatabaseSetup.csproj" />
+  <Project Path="ApplyUpdateInfo.Tests/ApplyUpdateInfo.Tests.csproj" />
+  <Project Path="ApplyUpdateInfo/ApplyUpdateInfo.csproj" />
+</Solution>
