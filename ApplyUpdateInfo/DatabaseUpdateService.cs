@@ -1,6 +1,7 @@
 ﻿using System.Data;
 using System.Data.Common;
 using System.Text.Json;
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 
 namespace ApplyUpdateInfo;
@@ -32,6 +33,10 @@ public sealed class DatabaseUpdateService
         if (string.Equals(settings.ProviderInvariantName, "Microsoft.Data.Sqlite", StringComparison.OrdinalIgnoreCase))
         {
             DbProviderFactories.RegisterFactory("Microsoft.Data.Sqlite", SqliteFactory.Instance);
+        }
+        else if (string.Equals(settings.ProviderInvariantName, "Microsoft.Data.SqlClient", StringComparison.OrdinalIgnoreCase))
+        {
+            DbProviderFactories.RegisterFactory("Microsoft.Data.SqlClient", SqlClientFactory.Instance);
         }
 
         _factory = DbProviderFactories.GetFactory(settings.ProviderInvariantName);
@@ -247,6 +252,40 @@ public sealed class DatabaseUpdateService
         }
 
         (string? schemaName, string objectName) = SplitTableName(safeTableName);
+        if (string.Equals(_settings.ProviderInvariantName, "Microsoft.Data.SqlClient", StringComparison.OrdinalIgnoreCase))
+        {
+            await using DbCommand sqlServerCommand = connection.CreateCommand();
+            sqlServerCommand.CommandText = """
+                SELECT KU.COLUMN_NAME
+                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS AS TC
+                INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS KU
+                    ON TC.CONSTRAINT_NAME = KU.CONSTRAINT_NAME
+                    AND TC.TABLE_SCHEMA = KU.TABLE_SCHEMA
+                    AND TC.TABLE_NAME = KU.TABLE_NAME
+                WHERE TC.CONSTRAINT_TYPE = 'PRIMARY KEY'
+                    AND KU.TABLE_SCHEMA = @schemaName
+                    AND KU.TABLE_NAME = @tableName
+                ORDER BY KU.ORDINAL_POSITION;
+                """;
+            DbParameter schemaParameter = sqlServerCommand.CreateParameter();
+            schemaParameter.ParameterName = "@schemaName";
+            schemaParameter.Value = schemaName ?? "dbo";
+            sqlServerCommand.Parameters.Add(schemaParameter);
+            DbParameter tableParameter = sqlServerCommand.CreateParameter();
+            tableParameter.ParameterName = "@tableName";
+            tableParameter.Value = objectName;
+            sqlServerCommand.Parameters.Add(tableParameter);
+
+            List<string> sqlServerKeys = [];
+            await using DbDataReader sqlServerReader = await sqlServerCommand.ExecuteReaderAsync(cancellationToken);
+            while (await sqlServerReader.ReadAsync(cancellationToken))
+            {
+                sqlServerKeys.Add(sqlServerReader.GetString(0));
+            }
+
+            return sqlServerKeys;
+        }
+
         DataTable schema = await connection.GetSchemaAsync("PrimaryKeys", [null, schemaName, objectName], cancellationToken);
         return schema.Rows.Cast<DataRow>()
             .OrderBy(row => row["ORDINAL"] is IConvertible value ? value.ToInt32(null) : 0)
