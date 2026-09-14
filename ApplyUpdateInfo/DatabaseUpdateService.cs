@@ -203,6 +203,25 @@ public sealed class DatabaseUpdateService
             return names;
         }
 
+        if (string.Equals(_settings.ProviderInvariantName, "Microsoft.Data.SqlClient", StringComparison.OrdinalIgnoreCase))
+        {
+            await using DbCommand sqlServerCommand = connection.CreateCommand();
+            sqlServerCommand.CommandText = """
+                SELECT TABLE_SCHEMA, TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_SCHEMA, TABLE_NAME;
+                """;
+            await using DbDataReader sqlServerReader = await sqlServerCommand.ExecuteReaderAsync(cancellationToken);
+            List<string> names = [];
+            while (await sqlServerReader.ReadAsync(cancellationToken))
+            {
+                names.Add($"{sqlServerReader.GetString(0)}.{sqlServerReader.GetString(1)}");
+            }
+
+            return names;
+        }
+
         DataTable schema = await connection.GetSchemaAsync("Tables", cancellationToken: cancellationToken);
         return schema.Rows.Cast<DataRow>()
             .Where(row => string.Equals(row["TABLE_TYPE"]?.ToString(), "BASE TABLE", StringComparison.OrdinalIgnoreCase))
