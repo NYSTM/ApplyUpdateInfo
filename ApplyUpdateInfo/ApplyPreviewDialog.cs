@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace ApplyUpdateInfo;
 
-public sealed class ApplyPreviewDialog : Form
+public sealed partial class ApplyPreviewDialog : Form
 {
     public static readonly DateTime PreviewJapanTime = TimeTokenService.GetJapanStandardTime();
 
@@ -26,61 +26,54 @@ public sealed class ApplyPreviewDialog : Form
         return false;
     }
 
+    public ApplyPreviewDialog()
+        : this("接続先", "Development", "テーブル", [])
+    {
+    }
+
     public ApplyPreviewDialog(
         string connectionName,
         string environment,
         string tableName,
         IEnumerable<ApplyPreviewRow> previewRows)
     {
-        Text = "適用内容の確認";
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.Sizable;
-        MinimizeBox = false;
-        MaximizeBox = true;
-        ShowInTaskbar = false;
-        ClientSize = new Size(980, 520);
+        InitializeComponent();
 
         List<ApplyPreviewRow> rows = previewRows.ToList();
         OperationSummary summary = OperationSummary.FromOperations(rows.Select(row => row.Operation));
-        Label header = new()
+        headerLabel.Text = $"接続先: {connectionName} ({environment}){Environment.NewLine}テーブル: {tableName}{Environment.NewLine}{summary}";
+        headerLabel.BackColor = string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase)
+            ? Color.FromArgb(128, 32, 32)
+            : Color.FromArgb(31, 78, 121);
+        headerLabel.ForeColor = Color.White;
+        previewGrid.HeaderBackColor = Color.FromArgb(31, 78, 121);
+        previewGrid.HeaderForeColor = Color.White;
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Operation", HeaderText = "操作", DataPropertyName = "Operation", FillWeight = 12 });
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Keys", HeaderText = "Keys", DataPropertyName = "Keys", FillWeight = 18 });
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "ColumnName", HeaderText = "項目", DataPropertyName = "ColumnName", FillWeight = 18 });
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "CurrentValue", HeaderText = "現在値", DataPropertyName = "CurrentValue", FillWeight = 24 });
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "UpdatedValue", HeaderText = "更新値", DataPropertyName = "UpdatedValue", FillWeight = 24 });
+        previewGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "Difference", HeaderText = "差分", DataPropertyName = "Difference", FillWeight = 14 });
+        previewGrid.TwoLevelHeaders = true;
+        previewGrid.HeaderGroupHeight = 26;
+        previewGrid.HeaderColumnHeight = 30;
+        previewGrid.HeaderGroups.Add(new LaControl.TableHeaderGroup
         {
-            Dock = DockStyle.Top,
-            Height = 72,
-            Padding = new Padding(12),
-            Text = $"接続先: {connectionName} ({environment}){Environment.NewLine}テーブル: {tableName}{Environment.NewLine}{summary}",
-            BackColor = string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase)
-                ? Color.MistyRose
-                : Color.AliceBlue
-        };
-
-        DataGridView grid = new()
+            Name = "OperationInformation",
+            HeaderText = "操作情報",
+            FirstColumnName = "Operation",
+            LastColumnName = "Keys"
+        });
+        previewGrid.HeaderGroups.Add(new LaControl.TableHeaderGroup
         {
-            Dock = DockStyle.Fill,
-            ReadOnly = true,
-            AllowUserToAddRows = false,
-            AutoGenerateColumns = false,
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill
-        };
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "操作", DataPropertyName = "Operation", FillWeight = 12 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Keys", DataPropertyName = "Keys", FillWeight = 18 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "項目", DataPropertyName = "ColumnName", FillWeight = 18 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "現在値", DataPropertyName = "CurrentValue", FillWeight = 24 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "更新値", DataPropertyName = "UpdatedValue", FillWeight = 24 });
-        grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "差分", DataPropertyName = "Difference", FillWeight = 14 });
-        grid.DataSource = rows.Where(static row => row.Operation.IsSelected)
+            Name = "ChangeContents",
+            HeaderText = "変更内容",
+            FirstColumnName = "ColumnName",
+            LastColumnName = "Difference"
+        });
+        previewGrid.DataSource = rows.Where(static row => row.Operation.IsSelected)
             .SelectMany(CreateDiffRows)
             .ToList();
-
-        Button cancelButton = new() { Text = "キャンセル", DialogResult = DialogResult.Cancel, Dock = DockStyle.Right, Width = 100 };
-        Button okButton = new() { Text = "適用へ進む", DialogResult = DialogResult.OK, Dock = DockStyle.Right, Width = 110 };
-        Panel buttons = new() { Dock = DockStyle.Bottom, Height = 42, Padding = new Padding(6) };
-        buttons.Controls.Add(cancelButton);
-        buttons.Controls.Add(okButton);
-        AcceptButton = okButton;
-        CancelButton = cancelButton;
-        Controls.Add(grid);
-        Controls.Add(buttons);
-        Controls.Add(header);
     }
 
     private static IEnumerable<object> CreateDiffRows(ApplyPreviewRow row)

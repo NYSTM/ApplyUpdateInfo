@@ -8,6 +8,9 @@ public sealed class UpdateInfoDocument
     [JsonPropertyName("tableName")]
     public string TableName { get; set; } = string.Empty;
 
+    [JsonPropertyName("columns")]
+    public Dictionary<string, UpdateColumnDefinition> Columns { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     [JsonPropertyName("operations")]
     public List<UpdateOperation> Operations { get; set; } = [];
 }
@@ -64,13 +67,38 @@ public sealed class UpdateInfoJsonService
             throw new JsonException("tableNameは必須です。");
         }
 
+        if (document.Columns is null)
+        {
+            throw new JsonException("columnsがnullです。");
+        }
+
+        if (document.Operations is null)
+        {
+            throw new JsonException("operationsは必須です。");
+        }
+
         if (document.Operations.Count == 0)
         {
             throw new JsonException("operationsに適用対象がありません。");
         }
 
-        foreach (UpdateOperation operation in document.Operations)
+        foreach (UpdateOperation? operation in document.Operations)
         {
+            if (operation is null)
+            {
+                throw new JsonException("operationsにnullの操作が含まれています。");
+            }
+
+            if (operation.Values is null)
+            {
+                throw new JsonException("操作のvaluesは必須です。");
+            }
+
+            if (operation.Keys is null)
+            {
+                throw new JsonException("操作のkeysは必須です。");
+            }
+
             if (operation.Type is not ("insert" or "update" or "delete"))
             {
                 throw new JsonException($"未対応の操作種別です: {operation.Type}");

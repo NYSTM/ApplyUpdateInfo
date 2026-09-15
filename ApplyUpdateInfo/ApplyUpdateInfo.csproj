@@ -13,20 +13,23 @@
 		<PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.2" />
 	</ItemGroup>
 	<ItemGroup>
-		<Reference Include="LaControl">
-			<HintPath>..\Lib\LaControl.dll</HintPath>
-		</Reference>
-		<Reference Include="LaControl.Table.Adapters">
-			<HintPath>..\Lib\LaControl.Table.Adapters.dll</HintPath>
-		</Reference>
-		<Reference Include="LaControl.Table.Core">
-			<HintPath>..\Lib\LaControl.Table.Core.dll</HintPath>
-		</Reference>
+	  <Reference Include="LaControl">
+	    <HintPath>..\Lib\LaControl.dll</HintPath>
+	  </Reference>
+	  <Reference Include="LaControl.Table.Adapters">
+	    <HintPath>..\Lib\LaControl.Table.Adapters.dll</HintPath>
+	  </Reference>
+	  <Reference Include="LaControl.Table.Core">
+	    <HintPath>..\Lib\LaControl.Table.Core.dll</HintPath>
+	  </Reference>
 	</ItemGroup>
 	<ItemGroup>
 	  <None Update="appsettings.json">
 	    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 	  </None>
+		<None Update="layouts\*.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
 		<DebugType>embedded</DebugType>
@@ -36,4 +39,5 @@
 		<DebugType>none</DebugType>
 		<OutputPath>..\Lib</OutputPath>
 	</PropertyGroup>
+	<ProjectExtensions><VisualStudio><UserProperties appsettings_1json__JsonSchema="" /></VisualStudio></ProjectExtensions>
 </Project>

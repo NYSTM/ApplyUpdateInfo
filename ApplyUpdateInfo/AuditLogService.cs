@@ -29,6 +29,7 @@ public static class BackupRestoreService
         UpdateInfoDocument restore = new()
         {
             TableName = backup.TableName,
+            Columns = backup.Columns,
             Operations = backup.Records.Select(record => new UpdateOperation
             {
                 Type = record.OperationType,

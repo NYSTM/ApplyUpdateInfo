@@ -107,10 +107,19 @@ ApplyUpdateInfo\bin\Debug\net8.0-windows\
 | `ConnectionString` | DB接続文字列 |
 | `BackupDirectory` | DB適用前バックアップの保存先 |
 | `MaxLoadRows` | Gridへ読み込める最大レコード数 |
+| `NowColumnNames` | JSON読み込み時に`values`の値を自動的に`$now`へ置換する列名の配列 |
 | `Environment` | `Development` または `Production` などの環境区分 |
 | `BackgroundColor` | フォーム背景色。HTML形式のカラーコード |
 
 本番接続のパスワードを設定ファイルへ直接保存する場合は、ファイルのアクセス権を制限してください。可能であれば、Windows認証や安全なシークレット管理を使用してください。
+
+`NowColumnNames` に列名を指定すると、JSON読み込み時に該当列の`values`を`$now`へ自動置換します。列名の判定は大文字・小文字を区別しません。主キーを含む`keys`は置換されません。
+
+```json
+{
+  "NowColumnNames": ["UpdatedAt", "ModifiedAt"]
+}
+```
 
 SQLiteファイルDBは既存ファイルに対してのみ接続します。存在しないファイルを接続時に自動作成しないため、開発用DBは`ApplyUpdateInfo.DatabaseSetup`で事前に作成してください。
 

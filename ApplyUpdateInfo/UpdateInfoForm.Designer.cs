@@ -15,6 +15,7 @@
         private Button applyButton;
         private Button checkButton;
         private Button exportJsonButton;
+        private Button createLayoutButton;
         private Label tableNameLabel;
         private Label statusLabel;
         private LaControl.LaTableControl updateGrid;
@@ -33,6 +34,10 @@
         private Button setOperationTypeButton;
         private Button setNowButton;
         private Button autoSizeColumnsButton;
+        private Panel tableInfoPanel;
+        private FlowLayoutPanel loadingPanel;
+        private Label loadingLabel;
+        private ProgressBar loadingProgressBar;
 
         /// <summary>
         ///  Clean up any resources being used.
@@ -61,6 +66,7 @@
             selectAllButton = new Button();
             clearSelectionButton = new Button();
             exportJsonButton = new Button();
+            createLayoutButton = new Button();
             connectionLabel = new Label();
             connectionComboBox = new ComboBox();
             switchConnectionButton = new Button();
@@ -73,7 +79,11 @@
             setOperationTypeButton = new Button();
             setNowButton = new Button();
             autoSizeColumnsButton = new Button();
+            tableInfoPanel = new Panel();
             tableNameLabel = new Label();
+            loadingPanel = new FlowLayoutPanel();
+            loadingLabel = new Label();
+            loadingProgressBar = new ProgressBar();
             tableSplitContainer = new SplitContainer();
             tablePanel = new Panel();
             tableTree = new TreeView();
@@ -85,6 +95,8 @@
             mainLayout.SuspendLayout();
             commandPanel.SuspendLayout();
             actionPanel.SuspendLayout();
+            tableInfoPanel.SuspendLayout();
+            loadingPanel.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)tableSplitContainer).BeginInit();
             tableSplitContainer.Panel1.SuspendLayout();
             tableSplitContainer.Panel2.SuspendLayout();
@@ -98,7 +110,7 @@
             mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1549F));
             mainLayout.Controls.Add(commandPanel, 0, 0);
             mainLayout.Controls.Add(actionPanel, 0, 1);
-            mainLayout.Controls.Add(tableNameLabel, 0, 2);
+            mainLayout.Controls.Add(tableInfoPanel, 0, 2);
             mainLayout.Controls.Add(tableSplitContainer, 0, 3);
             mainLayout.Controls.Add(statusLabel, 0, 4);
             mainLayout.Controls.Add(errorLogTextBox, 0, 5);
@@ -196,6 +208,22 @@
             exportJsonButton.Text = "修正情報JSON作成";
             exportJsonButton.UseVisualStyleBackColor = false;
             exportJsonButton.Click += ExportJsonButton_Click;
+            // 
+            // createLayoutButton
+            // 
+            createLayoutButton.AutoSize = true;
+            createLayoutButton.BackColor = Color.FromArgb(255, 243, 224);
+            createLayoutButton.FlatAppearance.BorderColor = Color.FromArgb(210, 160, 85);
+            createLayoutButton.FlatStyle = FlatStyle.Flat;
+            createLayoutButton.ForeColor = Color.FromArgb(120, 75, 20);
+            createLayoutButton.Dock = DockStyle.Top;
+            createLayoutButton.Margin = new Padding(4);
+            createLayoutButton.Name = "createLayoutButton";
+            createLayoutButton.Size = new Size(167, 33);
+            createLayoutButton.TabIndex = 7;
+            createLayoutButton.Text = "レイアウト作成";
+            createLayoutButton.UseVisualStyleBackColor = false;
+            createLayoutButton.Click += CreateLayoutButton_Click;
             // 
             // connectionLabel
             // 
@@ -343,6 +371,7 @@
             autoSizeColumnsButton.FlatAppearance.BorderColor = Color.FromArgb(115, 145, 185);
             autoSizeColumnsButton.FlatStyle = FlatStyle.Flat;
             autoSizeColumnsButton.ForeColor = Color.FromArgb(32, 60, 100);
+            autoSizeColumnsButton.Location = new Point(1098, 4);
             autoSizeColumnsButton.Margin = new Padding(4);
             autoSizeColumnsButton.Name = "autoSizeColumnsButton";
             autoSizeColumnsButton.Size = new Size(150, 33);
@@ -351,16 +380,63 @@
             autoSizeColumnsButton.UseVisualStyleBackColor = false;
             autoSizeColumnsButton.Click += AutoSizeColumnsButton_Click;
             // 
+            // tableInfoPanel
+            // 
+            tableInfoPanel.Controls.Add(tableNameLabel);
+            tableInfoPanel.Controls.Add(loadingPanel);
+            tableInfoPanel.Dock = DockStyle.Fill;
+            tableInfoPanel.Location = new Point(15, 123);
+            tableInfoPanel.Margin = new Padding(4, 0, 4, 0);
+            tableInfoPanel.Name = "tableInfoPanel";
+            tableInfoPanel.Size = new Size(1541, 37);
+            tableInfoPanel.TabIndex = 1;
+            // 
             // tableNameLabel
             // 
             tableNameLabel.Dock = DockStyle.Fill;
-            tableNameLabel.Location = new Point(15, 123);
-            tableNameLabel.Margin = new Padding(4, 0, 4, 0);
+            tableNameLabel.Location = new Point(0, 0);
+            tableNameLabel.Margin = new Padding(0);
             tableNameLabel.Name = "tableNameLabel";
-            tableNameLabel.Size = new Size(1541, 37);
-            tableNameLabel.TabIndex = 1;
+            tableNameLabel.Size = new Size(1091, 37);
+            tableNameLabel.TabIndex = 0;
             tableNameLabel.Text = "対象テーブル: 未読込";
             tableNameLabel.TextAlign = ContentAlignment.MiddleLeft;
+            // 
+            // loadingPanel
+            // 
+            loadingPanel.Controls.Add(loadingLabel);
+            loadingPanel.Controls.Add(loadingProgressBar);
+            loadingPanel.Dock = DockStyle.Right;
+            loadingPanel.Location = new Point(1091, 0);
+            loadingPanel.Margin = new Padding(0);
+            loadingPanel.Name = "loadingPanel";
+            loadingPanel.Size = new Size(450, 37);
+            loadingPanel.TabIndex = 0;
+            loadingPanel.Visible = false;
+            loadingPanel.WrapContents = false;
+            // 
+            // loadingLabel
+            // 
+            loadingLabel.AutoSize = true;
+            loadingLabel.Location = new Point(4, 9);
+            loadingLabel.Margin = new Padding(4, 9, 4, 4);
+            loadingLabel.Name = "loadingLabel";
+            loadingLabel.Size = new Size(169, 20);
+            loadingLabel.TabIndex = 0;
+            loadingLabel.Text = "テーブル一覧を読込中...";
+            loadingLabel.TextAlign = ContentAlignment.MiddleLeft;
+            loadingLabel.Visible = false;
+            // 
+            // loadingProgressBar
+            // 
+            loadingProgressBar.Location = new Point(181, 5);
+            loadingProgressBar.Margin = new Padding(4, 5, 4, 4);
+            loadingProgressBar.MarqueeAnimationSpeed = 30;
+            loadingProgressBar.Name = "loadingProgressBar";
+            loadingProgressBar.Size = new Size(180, 28);
+            loadingProgressBar.Style = ProgressBarStyle.Marquee;
+            loadingProgressBar.TabIndex = 13;
+            loadingProgressBar.Visible = false;
             // 
             // tableSplitContainer
             // 
@@ -373,13 +449,13 @@
             // tableSplitContainer.Panel1
             // 
             tableSplitContainer.Panel1.Controls.Add(tablePanel);
-            tableSplitContainer.Panel1MinSize = 180;
+            tableSplitContainer.Panel1MinSize = 300;
             // 
             // tableSplitContainer.Panel2
             // 
             tableSplitContainer.Panel2.Controls.Add(updateGrid);
             tableSplitContainer.Size = new Size(1541, 504);
-            tableSplitContainer.SplitterDistance = 257;
+            tableSplitContainer.SplitterDistance = 360;
             tableSplitContainer.SplitterWidth = 6;
             tableSplitContainer.TabIndex = 2;
             // 
@@ -388,6 +464,7 @@
             tablePanel.Controls.Add(tableTree);
             tablePanel.Controls.Add(openSelectedTableButton);
             tablePanel.Controls.Add(refreshTablesButton);
+            tablePanel.Controls.Add(createLayoutButton);
             tablePanel.Dock = DockStyle.Fill;
             tablePanel.Location = new Point(0, 0);
             tablePanel.Margin = new Padding(4);
@@ -452,9 +529,9 @@
             updateGrid.AutoGenerateColumns = true;
             updateGrid.CellBorderStyle = DataGridViewCellBorderStyle.Single;
             updateGrid.CellValueConverter = null;
-            updateGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(255, 192, 128);
+            updateGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(255, 128, 0);
             updateGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Meiryo UI", 12F, FontStyle.Regular, GraphicsUnit.Point, 128);
-            updateGrid.ColumnHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
+            updateGrid.ColumnHeadersDefaultCellStyle.ForeColor = Color.White;
             updateGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
             updateGrid.ColumnHeadersDefaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
             updateGrid.ColumnHeadersHeight = 25;
@@ -470,7 +547,8 @@
             updateGrid.EnableHeadersVisualStyles = false;
             updateGrid.EvenRowBackColor = Color.Empty;
             updateGrid.GridColor = SystemColors.WindowFrame;
-            updateGrid.HeaderBackColor = Color.FromArgb(255, 192, 128);
+            updateGrid.HeaderBackColor = Color.FromArgb(255, 128, 0);
+            updateGrid.HeaderForeColor = Color.White;
             updateGrid.IsDpiScalingEnabled = true;
             updateGrid.Location = new Point(0, 0);
             updateGrid.Margin = new Padding(0, 0, 0, 0);
@@ -478,9 +556,9 @@
             updateGrid.Name = "updateGrid";
             updateGrid.OddRowBackColor = Color.Empty;
             updateGrid.ReadOnly = false;
-            updateGrid.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(255, 192, 128);
+            updateGrid.RowHeadersDefaultCellStyle.BackColor = Color.FromArgb(255, 128, 0);
             updateGrid.RowHeadersDefaultCellStyle.Font = new Font("Meiryo UI", 12F, FontStyle.Regular, GraphicsUnit.Point, 128);
-            updateGrid.RowHeadersDefaultCellStyle.ForeColor = SystemColors.ControlText;
+            updateGrid.RowHeadersDefaultCellStyle.ForeColor = Color.White;
             updateGrid.RowHeadersDefaultCellStyle.SelectionBackColor = SystemColors.Highlight;
             updateGrid.RowHeadersDefaultCellStyle.SelectionForeColor = SystemColors.HighlightText;
             updateGrid.RowHeadersWidth = 41;
@@ -535,6 +613,9 @@
             commandPanel.PerformLayout();
             actionPanel.ResumeLayout(false);
             actionPanel.PerformLayout();
+            tableInfoPanel.ResumeLayout(false);
+            loadingPanel.ResumeLayout(false);
+            loadingPanel.PerformLayout();
             tableSplitContainer.Panel1.ResumeLayout(false);
             tableSplitContainer.Panel2.ResumeLayout(false);
             ((System.ComponentModel.ISupportInitialize)tableSplitContainer).EndInit();

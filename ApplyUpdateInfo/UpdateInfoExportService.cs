@@ -7,7 +7,12 @@ public sealed class UpdateInfoExportService
 {
     private static readonly JsonSerializerOptions SerializerOptions = new() { WriteIndented = true };
 
-    public string CreateUpdateJson(string tableName, DataTable table, IReadOnlyCollection<string> primaryKeyNames)
+    public string CreateUpdateJson(
+        string tableName,
+        DataTable table,
+        IReadOnlyCollection<string> primaryKeyNames,
+        IReadOnlyCollection<string>? nowColumnNames = null,
+        IReadOnlyDictionary<string, UpdateColumnDefinition>? configuredColumnDefinitions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
         ArgumentNullException.ThrowIfNull(table);
@@ -17,6 +22,15 @@ public sealed class UpdateInfoExportService
         }
 
         List<UpdateOperation> operations = [];
+        HashSet<string> configuredNowColumns = new(nowColumnNames ?? [], StringComparer.OrdinalIgnoreCase);
+        Dictionary<string, UpdateColumnDefinition> columns = table.Columns.Cast<DataColumn>()
+            .Where(static column => column.ColumnName is not ("Selected" or "OperationType"))
+            .ToDictionary(
+                static column => column.ColumnName,
+                column => configuredColumnDefinitions?.GetValueOrDefault(column.ColumnName)
+                    ?? UpdateColumnDefinition.FromType(column.DataType, column.AllowDBNull, column.MaxLength),
+                StringComparer.OrdinalIgnoreCase);
+
         foreach (DataRow row in table.Rows.Cast<DataRow>().Where(row => row.Field<bool>("Selected")))
         {
             string operationType = GetOperationType(row["OperationType"]);
@@ -29,7 +43,9 @@ public sealed class UpdateInfoExportService
                     continue;
                 }
 
-                JsonElement value = ToJsonElement(row[column]);
+                JsonElement value = configuredNowColumns.Contains(column.ColumnName)
+                    ? JsonSerializer.SerializeToElement("$now")
+                    : ToJsonElement(row[column]);
                 values[column.ColumnName] = value;
                 if (primaryKeyNames.Contains(column.ColumnName, StringComparer.OrdinalIgnoreCase))
                 {
@@ -37,15 +53,21 @@ public sealed class UpdateInfoExportService
                 }
             }
 
-            if (keys.Count != primaryKeyNames.Count)
+            if (keys.Count != primaryKeyNames.Count
+                || keys.Values.Any(static value => value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined))
             {
-                throw new InvalidOperationException("主キー値が空のレコードが含まれています。");
+                throw new InvalidOperationException("主キー値が空またはnullのレコードが含まれています。");
             }
 
             operations.Add(new UpdateOperation { Type = operationType, Values = values, Keys = keys });
         }
 
-        UpdateInfoDocument document = new() { TableName = tableName, Operations = operations };
+        UpdateInfoDocument document = new()
+        {
+            TableName = tableName,
+            Columns = columns,
+            Operations = operations
+        };
         return JsonSerializer.Serialize(document, SerializerOptions);
     }
 

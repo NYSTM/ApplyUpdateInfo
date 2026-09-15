@@ -1,5 +1,26 @@
 ﻿{
   "tableName": "Users",
+  "columns": {
+    "Id": {
+      "dataType": "Int32",
+      "nullable": false
+    },
+    "Name": {
+      "dataType": "String",
+      "nullable": true,
+      "maxLength": 100
+    },
+    "Email": {
+      "dataType": "String",
+      "nullable": true,
+      "maxLength": 255
+    },
+    "UpdatedAt": {
+      "dataType": "String",
+      "format": "yyyyMMddHHmmssfff",
+      "nullable": true
+    }
+  },
   "operations": [
     {
       "type": "insert",
@@ -7,7 +28,7 @@
         "Id": 2,
         "Name": "佐藤花子",
         "Email": "hanako@example.com",
-        "UpdatedAt": "2025-01-15T10:30:00"
+        "UpdatedAt": "20250115103000000"
       }
     },
     {

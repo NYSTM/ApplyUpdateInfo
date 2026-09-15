@@ -1,5 +1,6 @@
 ﻿using System.Data;
 using System.Data.Common;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
@@ -16,7 +17,15 @@ public sealed record DatabaseConnectionProfile(
     string Name,
     DatabaseSettings Settings,
     string Environment = "Development",
-    string BackgroundColor = "#EAF3FF");
+    string BackgroundColor = "#EAF3FF")
+{
+    public IReadOnlyList<string> NowColumnNames { get; init; } = [];
+
+    public string? TableLayoutFile { get; init; }
+
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> TableLayouts { get; set; }
+        = new Dictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>>(StringComparer.OrdinalIgnoreCase);
+}
 public sealed record OperationValidationResult(IReadOnlyList<string> Errors)
 {
     public bool IsValid => Errors.Count == 0;
@@ -68,6 +77,12 @@ public sealed class DatabaseUpdateService
             if (keys.Count != primaryKeyNames.Count)
             {
                 errors.Add($"{index + 1}件目（{operation.OperationLabel}）: 主キー値が不足しています。");
+                continue;
+            }
+
+            if (keys.Values.Any(static value => value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined))
+            {
+                errors.Add($"{index + 1}件目（{operation.OperationLabel}）: 主キーにnullは指定できません。");
                 continue;
             }
 
@@ -232,6 +247,19 @@ public sealed class DatabaseUpdateService
             .ToArray();
     }
 
+    public async Task<IReadOnlyDictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>>> LoadAllTableLayoutsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        IReadOnlyList<string> tableNames = await LoadTableNamesAsync(cancellationToken);
+        Dictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> layouts = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string tableName in tableNames)
+        {
+            layouts[tableName] = await LoadColumnDefinitionsAsync(tableName, cancellationToken);
+        }
+
+        return layouts;
+    }
+
     public async Task<IReadOnlyList<string>> LoadColumnNamesAsync(string tableName, CancellationToken cancellationToken = default)
     {
         string safeTableName = ValidateIdentifier(tableName);
@@ -244,6 +272,38 @@ public sealed class DatabaseUpdateService
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Cast<string>()
             .ToArray();
+    }
+
+    public async Task<IReadOnlyDictionary<string, UpdateColumnDefinition>> LoadColumnDefinitionsAsync(
+        string tableName,
+        CancellationToken cancellationToken = default)
+    {
+        string safeTableName = ValidateIdentifier(tableName);
+        await using DbConnection connection = CreateConnection();
+        await connection.OpenAsync(cancellationToken);
+        await using DbCommand command = connection.CreateCommand();
+        command.CommandText = $"SELECT * FROM {QuoteIdentifier(safeTableName)} WHERE 1 = 0";
+        command.CommandTimeout = 120;
+        await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        Dictionary<string, UpdateColumnDefinition> definitions = new(StringComparer.OrdinalIgnoreCase);
+        foreach (DbColumn column in reader.GetColumnSchema())
+        {
+            if (string.IsNullOrWhiteSpace(column.ColumnName))
+            {
+                continue;
+            }
+
+            UpdateColumnDefinition definition = UpdateColumnDefinition.FromType(
+                column.DataType,
+                column.AllowDBNull ?? true,
+                column.ColumnSize);
+            definition.Precision = ToByte(column.NumericPrecision);
+            definition.Scale = ToByte(column.NumericScale);
+            definitions[column.ColumnName] = definition;
+        }
+
+        return definitions;
     }
 
     public async Task<IReadOnlyList<string>> LoadPrimaryKeyNamesAsync(string tableName, CancellationToken cancellationToken = default)
@@ -314,11 +374,19 @@ public sealed class DatabaseUpdateService
             .ToArray();
     }
 
+    private static byte? ToByte(int? value)
+    {
+        return value is >= byte.MinValue and <= byte.MaxValue
+            ? (byte)value.Value
+            : null;
+    }
+
     public async Task<int> ApplyAsync(
         string tableName,
         IEnumerable<UpdateOperation> operations,
         DateTime? utcNow = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, UpdateColumnDefinition>? columnDefinitions = null)
     {
         string safeTableName = ValidateIdentifier(tableName);
         List<UpdateOperation> selected = operations.Where(operation => operation.IsSelected).ToList();
@@ -340,7 +408,7 @@ public sealed class DatabaseUpdateService
                 await using DbCommand command = connection.CreateCommand();
                 command.Transaction = transaction;
                 command.CommandText = BuildCommandText(safeTableName, operation);
-                AddParameters(command, operation, applyJapanTime);
+                AddParameters(command, operation, applyJapanTime, columnDefinitions);
                 affected += await command.ExecuteNonQueryAsync(cancellationToken);
             }
 
@@ -368,12 +436,18 @@ public sealed class DatabaseUpdateService
             return;
         }
 
-        UpdateBackupDocument backup = new() { TableName = tableName };
+        UpdateBackupDocument backup = new()
+        {
+            TableName = tableName,
+            Columns = new Dictionary<string, UpdateColumnDefinition>(
+                await LoadColumnDefinitionsAsync(tableName, cancellationToken),
+                StringComparer.OrdinalIgnoreCase)
+        };
         foreach (UpdateOperation operation in backupTargets)
         {
             await using DbCommand command = connection.CreateCommand();
             command.CommandText = $"SELECT * FROM {QuoteIdentifier(tableName)} WHERE {BuildWhere(operation.Keys)}";
-            AddKeyParameters(command, operation.Keys);
+            AddKeyParameters(command, operation.Keys, backup.Columns);
             await using DbDataReader reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken))
             {
@@ -407,15 +481,18 @@ public sealed class DatabaseUpdateService
         File.Move(temporaryPath, filePath);
     }
 
-    private static void AddKeyParameters(DbCommand command, IReadOnlyDictionary<string, JsonElement> keys)
+    private static void AddKeyParameters(
+        DbCommand command,
+        IReadOnlyDictionary<string, JsonElement> keys,
+        IReadOnlyDictionary<string, UpdateColumnDefinition>? columnDefinitions = null)
     {
         DateTime japanTime = TimeTokenService.GetJapanStandardTime();
         int index = 0;
-        foreach (JsonElement value in keys.Values)
+        foreach ((string name, JsonElement value) in keys)
         {
             DbParameter parameter = command.CreateParameter();
             parameter.ParameterName = $"@p{index++}";
-            parameter.Value = ToDbValue(value, japanTime);
+            parameter.Value = ToDbValue(value, japanTime, columnDefinitions?.GetValueOrDefault(name));
             command.Parameters.Add(parameter);
         }
     }
@@ -480,26 +557,53 @@ public sealed class DatabaseUpdateService
         return string.Join(" AND ", keys.Keys.Select((name, index) => $"{QuoteIdentifier(name)} = @p{index + parameterOffset}"));
     }
 
-    private static void AddParameters(DbCommand command, UpdateOperation operation, DateTime utcNow)
+    private static void AddParameters(
+        DbCommand command,
+        UpdateOperation operation,
+        DateTime utcNow,
+        IReadOnlyDictionary<string, UpdateColumnDefinition>? columnDefinitions)
     {
-        IEnumerable<JsonElement> values = operation.Type == "delete"
-            ? operation.Keys.Values
-            : operation.Values.Values.Concat(operation.Type == "update" ? operation.Keys.Values : []);
+        IEnumerable<KeyValuePair<string, JsonElement>> values = operation.Type switch
+        {
+            "delete" => operation.Keys,
+            "update" => operation.Values.Concat(operation.Keys),
+            _ => operation.Values
+        };
+
         int index = 0;
-        foreach (JsonElement value in values)
+        foreach ((string name, JsonElement value) in values)
         {
             DbParameter parameter = command.CreateParameter();
             parameter.ParameterName = $"@p{index++}";
-            parameter.Value = ToDbValue(value, utcNow);
+            parameter.Value = ToDbValue(value, utcNow, columnDefinitions?.GetValueOrDefault(name));
             command.Parameters.Add(parameter);
         }
     }
 
-    private static object ToDbValue(JsonElement value, DateTime utcNow)
+    private static object ToDbValue(
+        JsonElement value,
+        DateTime utcNow,
+        UpdateColumnDefinition? columnDefinition = null)
     {
-        if (value.ValueKind == JsonValueKind.String && string.Equals(value.GetString(), "$now", StringComparison.Ordinal))
+        if (value.ValueKind == JsonValueKind.String
+            && string.Equals(value.GetString(), "$now", StringComparison.Ordinal)
+            && !IsStringType(columnDefinition))
         {
             return utcNow;
+        }
+
+        if (value.ValueKind == JsonValueKind.String
+            && string.Equals(value.GetString(), "$now", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(columnDefinition?.Format))
+        {
+            try
+            {
+                return utcNow.ToString(columnDefinition.Format, CultureInfo.InvariantCulture);
+            }
+            catch (FormatException exception)
+            {
+                throw new JsonException($"$nowのフォーマットが不正です: {columnDefinition.Format}", exception);
+            }
         }
 
         return value.ValueKind switch
@@ -513,6 +617,12 @@ public sealed class DatabaseUpdateService
             JsonValueKind.String => value.GetString() ?? string.Empty,
             _ => value.GetRawText()
         };
+    }
+
+    private static bool IsStringType(UpdateColumnDefinition? columnDefinition)
+    {
+        return columnDefinition is not null
+            && columnDefinition.DataType.Trim() is "String" or "string" or "AnsiString" or "Text";
     }
 
     private static void EnsureValues(IReadOnlyDictionary<string, JsonElement> values)

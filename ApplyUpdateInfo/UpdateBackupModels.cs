@@ -11,6 +11,9 @@ public sealed class UpdateBackupDocument
     [JsonPropertyName("tableName")]
     public string TableName { get; init; } = string.Empty;
 
+    [JsonPropertyName("columns")]
+    public Dictionary<string, UpdateColumnDefinition> Columns { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+
     [JsonPropertyName("records")]
     public List<UpdateBackupRecord> Records { get; init; } = [];
 }

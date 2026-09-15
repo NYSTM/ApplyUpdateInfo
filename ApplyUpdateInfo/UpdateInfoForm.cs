@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel;
 using System.Data;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Data.Sqlite;
@@ -11,6 +12,7 @@ public partial class UpdateInfoForm : Form
     private readonly BindingList<UpdateOperationRow> _rows = [];
     private readonly UpdateInfoJsonService _jsonService = new();
     private readonly UpdateInfoExportService _exportService = new();
+    private readonly TableLayoutFileService _tableLayoutFileService = new();
     private readonly AuditLogService _auditLogService = new();
     private DatabaseUpdateService? _databaseService;
     private UpdateInfoDocument? _document;
@@ -34,6 +36,46 @@ public partial class UpdateInfoForm : Form
         InvalidateContentCheck();
         updateGrid.DataSource = _rows;
         Load += UpdateInfoForm_Loaded;
+    }
+
+    private async void CreateLayoutButton_Click(object? sender, EventArgs e)
+    {
+        if (_activeConnectionProfile is null || _databaseService is null)
+        {
+            MessageBox.Show(this, "先に接続先を選択してください。", "確認", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_activeConnectionProfile.TableLayoutFile))
+        {
+            ShowError("テーブルレイアウトファイルが設定されていません。", new InvalidOperationException("TableLayoutFileを設定してください。"));
+            return;
+        }
+
+        string filePath = _tableLayoutFileService.ResolvePath(_activeConnectionProfile.TableLayoutFile);
+        if (File.Exists(filePath)
+            && MessageBox.Show(this, $"既存のレイアウトファイルを上書きします。\n{filePath}\n続行しますか？", "レイアウト上書き確認", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        {
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            IReadOnlyDictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> layouts =
+                await _databaseService.LoadAllTableLayoutsAsync();
+            await _tableLayoutFileService.SaveAsync(_activeConnectionProfile.TableLayoutFile, layouts);
+            _activeConnectionProfile.TableLayouts = layouts;
+            statusLabel.Text = $"テーブルレイアウトを作成しました（{layouts.Count:N0}テーブル）。";
+        }
+        catch (Exception exception)
+        {
+            ShowError("テーブルレイアウトの作成に失敗しました。", exception);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 
     private void AppendLaControlLog(string message)
@@ -149,9 +191,9 @@ public partial class UpdateInfoForm : Form
             return;
         }
 
-        foreach (DataGridViewRow gridRow in updateGrid.SelectedRows)
+        foreach (object? selectedItem in updateGrid.SelectedItems)
         {
-            if (gridRow.DataBoundItem is DataRowView rowView && rowView.Row.Table.Columns.Contains("OperationType"))
+            if (selectedItem is DataRowView rowView && rowView.Row.Table.Columns.Contains("OperationType"))
             {
                 rowView.Row["OperationType"] = operationType;
             }
@@ -175,8 +217,8 @@ public partial class UpdateInfoForm : Form
             return;
         }
 
-        DataGridViewCell cell = updateGrid.CurrentCell;
-        if (cell.RowIndex < 0 || cell.ColumnIndex < 0 || cell.OwningRow.DataBoundItem is not DataRowView rowView)
+        var cell = updateGrid.CurrentCell;
+        if (cell is null || cell.RowIndex < 0 || cell.ColumnIndex < 0 || updateGrid.CurrentItem is not DataRowView rowView)
         {
             return;
         }
@@ -242,6 +284,7 @@ public partial class UpdateInfoForm : Form
 
     private async Task LoadTableTreeAsync()
     {
+        SetLoading(true);
         try
         {
             _databaseService ??= CreateDatabaseService();
@@ -258,6 +301,10 @@ public partial class UpdateInfoForm : Form
         catch (Exception exception)
         {
             ShowError("テーブル一覧の読込に失敗しました。", exception);
+        }
+        finally
+        {
+            SetLoading(false);
         }
     }
 
@@ -332,6 +379,10 @@ public partial class UpdateInfoForm : Form
         {
             AppendLaControlLog($"JSON読み込み開始: {filePath}");
             _document = await _jsonService.ReadAsync(filePath);
+            if (_activeConnectionProfile?.TableLayouts.TryGetValue(_document.TableName, out IReadOnlyDictionary<string, UpdateColumnDefinition>? configuredLayout) == true)
+            {
+                _document.Columns = new Dictionary<string, UpdateColumnDefinition>(configuredLayout, StringComparer.OrdinalIgnoreCase);
+            }
             InvalidateContentCheck();
             updateGrid.DataSource = null;
             _rows.Clear();
@@ -495,7 +546,12 @@ public partial class UpdateInfoForm : Form
         try
         {
             IReadOnlyList<string> primaryKeys = await _databaseService.LoadPrimaryKeyNamesAsync(_developmentTableName);
-            string json = _exportService.CreateUpdateJson(_developmentTableName, _developmentTable, primaryKeys);
+            string json = _exportService.CreateUpdateJson(
+                _developmentTableName,
+                _developmentTable,
+                primaryKeys,
+                _activeConnectionProfile?.NowColumnNames ?? [],
+                _activeConnectionProfile?.TableLayouts.GetValueOrDefault(_developmentTableName));
             using SaveFileDialog dialog = new()
             {
                 Filter = "JSONファイル (*.json)|*.json",
@@ -567,23 +623,58 @@ public partial class UpdateInfoForm : Form
     private void ConfigureOperationTypeColumn()
     {
         DataGridViewColumn? currentColumn = updateGrid.Columns["OperationType"];
-        if (currentColumn is null || currentColumn is DataGridViewComboBoxColumn)
+        if (currentColumn is not null && currentColumn is not DataGridViewComboBoxColumn)
         {
-            return;
+            int displayIndex = currentColumn.DisplayIndex;
+            DataGridViewComboBoxColumn comboColumn = new()
+            {
+                DataPropertyName = "OperationType",
+                HeaderText = "操作種別",
+                Name = "OperationType",
+                DisplayIndex = displayIndex,
+                FlatStyle = FlatStyle.Flat,
+                DataSource = new[] { "新規", "更新", "削除" }
+            };
+            updateGrid.Columns.Remove(currentColumn);
+            updateGrid.Columns.Insert(displayIndex, comboColumn);
         }
 
-        int displayIndex = currentColumn.DisplayIndex;
-        DataGridViewComboBoxColumn comboColumn = new()
+        ConfigureHeaderGroups();
+    }
+
+    private void ConfigureHeaderGroups()
+    {
+        updateGrid.TwoLevelHeaders = true;
+        updateGrid.HeaderGroupHeight = 26;
+        updateGrid.HeaderColumnHeight = 30;
+        updateGrid.HeaderGroups.Clear();
+
+        if (updateGrid.Columns.Contains("Selected") && updateGrid.Columns.Contains("OperationType"))
         {
-            DataPropertyName = "OperationType",
-            HeaderText = "操作種別",
-            Name = "OperationType",
-            DisplayIndex = displayIndex,
-            FlatStyle = FlatStyle.Flat,
-            DataSource = new[] { "新規", "更新", "削除" }
-        };
-        updateGrid.Columns.Remove(currentColumn);
-        updateGrid.Columns.Insert(displayIndex, comboColumn);
+            updateGrid.HeaderGroups.Add(new LaControl.TableHeaderGroup
+            {
+                Name = "ApplySettings",
+                HeaderText = "適用設定",
+                FirstColumnName = "Selected",
+                LastColumnName = "OperationType"
+            });
+        }
+
+        List<DataGridViewColumn> targetColumns = updateGrid.Columns
+            .Cast<DataGridViewColumn>()
+            .Where(static column => column.Name is not ("Selected" or "OperationType"))
+            .OrderBy(static column => column.DisplayIndex)
+            .ToList();
+        if (targetColumns.Count > 0)
+        {
+            updateGrid.HeaderGroups.Add(new LaControl.TableHeaderGroup
+            {
+                Name = "UpdateTargets",
+                HeaderText = "修正対象",
+                FirstColumnName = targetColumns[0].Name,
+                LastColumnName = targetColumns[^1].Name
+            });
+        }
     }
 
     private void ApplyPrimaryKeyHeaderStyle(IReadOnlyCollection<string> primaryKeyNames)
@@ -653,7 +744,8 @@ public partial class UpdateInfoForm : Form
             }
 
             string text = row[primaryKeyName] == DBNull.Value ? string.Empty : row[primaryKeyName]?.ToString() ?? string.Empty;
-            JsonElement value = ConvertJsonValue(text, GetOriginalValue(operation, primaryKeyName), primaryKeyName);
+            UpdateColumnDefinition? definition = _document?.Columns.GetValueOrDefault(primaryKeyName);
+            JsonElement value = ConvertJsonValue(text, GetOriginalValue(operation, primaryKeyName), primaryKeyName, definition);
             if (operation.Type == "insert")
             {
                 operation.Values[primaryKeyName] = value;
@@ -681,7 +773,7 @@ public partial class UpdateInfoForm : Form
         return JsonSerializer.SerializeToElement<string>(string.Empty);
     }
 
-    private static void SyncJsonValues(Dictionary<string, JsonElement> values, DataRow row)
+    private void SyncJsonValues(Dictionary<string, JsonElement> values, DataRow row)
     {
         foreach ((string name, JsonElement originalValue) in values.ToList())
         {
@@ -690,13 +782,37 @@ public partial class UpdateInfoForm : Form
                 continue;
             }
 
-            string text = row[name] == DBNull.Value ? string.Empty : row[name]?.ToString() ?? string.Empty;
-            values[name] = ConvertJsonValue(text, originalValue, name);
+            string text = row[name] == DBNull.Value ? "null" : row[name]?.ToString() ?? string.Empty;
+            UpdateColumnDefinition? definition = _document?.Columns.GetValueOrDefault(name);
+            values[name] = ConvertJsonValue(text, originalValue, name, definition);
         }
     }
 
-    private static JsonElement ConvertJsonValue(string text, JsonElement originalValue, string propertyName)
+    private static JsonElement ConvertJsonValue(
+        string text,
+        JsonElement originalValue,
+        string propertyName,
+        UpdateColumnDefinition? definition)
     {
+        string trimmedText = text.Trim();
+        if (string.Equals(trimmedText, "null", StringComparison.OrdinalIgnoreCase)
+            && (originalValue.ValueKind == JsonValueKind.Null || definition is not null))
+        {
+            EnsureNullable(definition, propertyName);
+            return JsonSerializer.SerializeToElement<object?>(null);
+        }
+
+        if (definition is not null)
+        {
+            if (trimmedText.Length == 0)
+            {
+                EnsureNullable(definition, propertyName);
+                return JsonSerializer.SerializeToElement<object?>(null);
+            }
+
+            return ConvertByColumnType(text, propertyName, definition);
+        }
+
         if (originalValue.ValueKind == JsonValueKind.String)
         {
             return JsonSerializer.SerializeToElement(text);
@@ -728,6 +844,72 @@ public partial class UpdateInfoForm : Form
         catch (Exception exception)
         {
             throw new JsonException($"列「{propertyName}」の値をJSONへ変換できません: {text}", exception);
+        }
+    }
+
+    private static JsonElement ConvertByColumnType(
+        string text,
+        string propertyName,
+        UpdateColumnDefinition definition)
+    {
+        string dataType = definition.DataType.Trim().ToLowerInvariant();
+        try
+        {
+            return dataType switch
+            {
+                "boolean" or "bool" => bool.TryParse(text, out bool boolean)
+                    ? JsonSerializer.SerializeToElement(boolean)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "byte" or "int16" or "int32" or "uint16" or "uint32" =>
+                    int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int integer)
+                        ? JsonSerializer.SerializeToElement(integer)
+                        : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "int64" or "uint64" => long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long longValue)
+                    ? JsonSerializer.SerializeToElement(longValue)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "single" or "float" => float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float single)
+                    ? JsonSerializer.SerializeToElement(single)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "double" => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double doubleValue)
+                    ? JsonSerializer.SerializeToElement(doubleValue)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "decimal" => decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal decimalValue)
+                    ? JsonSerializer.SerializeToElement(decimalValue)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "datetime" or "datetime2" or "date" or "time" => DateTime.TryParse(
+                    text,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.RoundtripKind,
+                    out DateTime dateTime)
+                    ? JsonSerializer.SerializeToElement(dateTime)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "guid" => Guid.TryParse(text, out Guid guid)
+                    ? JsonSerializer.SerializeToElement(guid)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                "binary" => Convert.FromBase64String(text) is byte[] bytes
+                    ? JsonSerializer.SerializeToElement(bytes)
+                    : throw InvalidColumnValue(propertyName, definition.DataType, text),
+                _ => JsonSerializer.SerializeToElement(text)
+            };
+        }
+        catch (FormatException exception)
+        {
+            throw new JsonException($"列「{propertyName}」の値を{definition.DataType}として解釈できません: {text}", exception);
+        }
+        catch (OverflowException exception)
+        {
+            throw new JsonException($"列「{propertyName}」の値が{definition.DataType}の範囲外です: {text}", exception);
+        }
+    }
+
+    private static JsonException InvalidColumnValue(string propertyName, string dataType, string text) =>
+        new($"列「{propertyName}」の値を{dataType}として解釈できません: {text}");
+
+    private static void EnsureNullable(UpdateColumnDefinition? definition, string propertyName)
+    {
+        if (definition is not null && !definition.Nullable)
+        {
+            throw new JsonException($"列「{propertyName}」にはnullを指定できません。");
         }
     }
 
@@ -849,7 +1031,8 @@ public partial class UpdateInfoForm : Form
             int affected = await _databaseService.ApplyAsync(
                 _document.TableName,
                 effectivePreviewRows.Select(row => row.Operation),
-                ApplyPreviewDialog.PreviewJapanTime);
+                ApplyPreviewDialog.PreviewJapanTime,
+                columnDefinitions: _document.Columns);
             statusLabel.Text = $"適用完了: {affected:N0} 行に反映しました。";
             if (_activeConnectionProfile is not null)
             {
@@ -894,7 +1077,7 @@ public partial class UpdateInfoForm : Form
         return new DatabaseUpdateService(profile.Settings);
     }
 
-    private static IReadOnlyList<DatabaseConnectionProfile> LoadConnectionProfiles()
+    private IReadOnlyList<DatabaseConnectionProfile> LoadConnectionProfiles()
     {
         string settingsPath = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
         using JsonDocument document = JsonDocument.Parse(File.ReadAllText(settingsPath));
@@ -911,15 +1094,88 @@ public partial class UpdateInfoForm : Form
                 string backgroundColor = connection.TryGetProperty("BackgroundColor", out JsonElement colorElement)
                     ? colorElement.GetString() ?? GetDefaultBackgroundColor(environment)
                     : GetDefaultBackgroundColor(environment);
-                profiles.Add(new DatabaseConnectionProfile(name, CreateDatabaseSettings(connection), environment, backgroundColor));
+                profiles.Add(new DatabaseConnectionProfile(name, CreateDatabaseSettings(connection), environment, backgroundColor)
+                {
+                    NowColumnNames = ReadNowColumnNames(connection),
+                    TableLayoutFile = ReadTableLayoutFile(connection),
+                    TableLayouts = ReadConfiguredTableLayouts(connection)
+                });
             }
         }
         else
         {
-            profiles.Add(new DatabaseConnectionProfile("既定", CreateDatabaseSettings(database)));
+            profiles.Add(new DatabaseConnectionProfile("既定", CreateDatabaseSettings(database))
+            {
+                NowColumnNames = ReadNowColumnNames(database),
+                TableLayoutFile = ReadTableLayoutFile(database),
+                TableLayouts = ReadConfiguredTableLayouts(database)
+            });
         }
 
         return profiles;
+    }
+
+    private static IReadOnlyList<string> ReadNowColumnNames(JsonElement connection)
+    {
+        if (!connection.TryGetProperty("NowColumnNames", out JsonElement columnNames) ||
+            columnNames.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return columnNames.EnumerateArray()
+            .Where(static column => column.ValueKind == JsonValueKind.String)
+            .Select(static column => column.GetString())
+            .Where(static column => !string.IsNullOrWhiteSpace(column))
+            .Select(static column => column!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IReadOnlyDictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> ReadConfiguredTableLayouts(JsonElement connection)
+    {
+        string? filePath = ReadTableLayoutFile(connection);
+        if (!string.IsNullOrWhiteSpace(filePath))
+        {
+            return _tableLayoutFileService.Load(filePath);
+        }
+
+        return ReadInlineTableLayouts(connection);
+    }
+
+    private static string? ReadTableLayoutFile(JsonElement connection)
+    {
+        return connection.TryGetProperty("TableLayoutFile", out JsonElement filePath)
+            && filePath.ValueKind == JsonValueKind.String
+            ? filePath.GetString()
+            : null;
+    }
+
+    private static IReadOnlyDictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> ReadInlineTableLayouts(JsonElement connection)
+    {
+        if (!connection.TryGetProperty("TableLayouts", out JsonElement tableLayouts)
+            || tableLayouts.ValueKind != JsonValueKind.Object)
+        {
+            return new Dictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        Dictionary<string, IReadOnlyDictionary<string, UpdateColumnDefinition>> layouts = new(StringComparer.OrdinalIgnoreCase);
+        JsonSerializerOptions options = new() { PropertyNameCaseInsensitive = true };
+        foreach (JsonProperty tableProperty in tableLayouts.EnumerateObject())
+        {
+            if (tableProperty.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException($"TableLayouts.{tableProperty.Name}はオブジェクトで指定してください。");
+            }
+
+            Dictionary<string, UpdateColumnDefinition> columns = JsonSerializer.Deserialize<Dictionary<string, UpdateColumnDefinition>>(
+                tableProperty.Value.GetRawText(),
+                options)
+                ?? throw new InvalidOperationException($"TableLayouts.{tableProperty.Name}の読み込みに失敗しました。");
+            layouts[tableProperty.Name] = new Dictionary<string, UpdateColumnDefinition>(columns, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return layouts;
     }
 
     private void ApplyConnectionAppearance(DatabaseConnectionProfile profile)
@@ -994,10 +1250,19 @@ public partial class UpdateInfoForm : Form
         applyButton.Enabled = !busy && _isContentChecked;
         checkButton.Enabled = !busy;
         exportJsonButton.Enabled = !busy;
+        createLayoutButton.Enabled = !busy;
         autoSizeColumnsButton.Enabled = !busy;
         refreshTablesButton.Enabled = !busy;
         openSelectedTableButton.Enabled = !busy;
         Cursor = busy ? Cursors.WaitCursor : Cursors.Default;
+    }
+
+    private void SetLoading(bool loading)
+    {
+        loadingLabel.Visible = loading;
+        loadingProgressBar.Visible = loading;
+        loadingPanel.Visible = loading;
+        loadingProgressBar.Refresh();
     }
 
     private void JsonOperationTable_ColumnChanged(object? sender, DataColumnChangeEventArgs e)
